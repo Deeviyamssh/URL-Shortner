@@ -1,0 +1,23 @@
+{
+  "id": "FEAT-004",
+  "type": "docs",
+  "description": "Write README.md and update KIRO_PROGRESS.md. Depends on FEAT-001, FEAT-002, FEAT-003 being complete so docs accurately reflect the finished state.",
+  "status": "completed",
+  "steps": [
+    "1. Write README.md at project root covering: project overview; architecture (text diagram: Browser -> Spring Boot [React static + REST API] -> PostgreSQL, Redis, RabbitMQ); prerequisites (Java 21, Maven 3.9, Node 20, Docker); quick start with docker compose up --build; local dev without Docker (start each service, set env vars, mvn spring-boot:run, cd frontend && npm run dev); environment variables table (name, default, required, description); API demo section with curl examples for create/redirect/list/delete/analytics; test command (mvn test, note Docker required); Railway deployment guide (provision PostgreSQL, Redis, CloudAMQP add-ons, set env vars, connect); known limitations (RabbitMQ not native on Railway — use CloudAMQP free tier; dev credentials printed at startup — change in production); default dev credentials block.",
+    "2. Update KIRO_PROGRESS.md: record all phases completed, commands run and their exit codes, pass/fail results, any unresolved issues, and 'DONE — project ready for deployment' as final status."
+  ],
+  "acceptance_criteria": [
+    "README.md exists at project root with all sections listed in step 1",
+    "README.md contains at least one working curl example for each core flow",
+    "README.md documents all environment variables from .env.example",
+    "KIRO_PROGRESS.md updated with final status"
+  ],
+  "verification": [
+    "Test-Path README.md  (file exists)",
+    "Test-Path KIRO_PROGRESS.md  (file exists and is updated)",
+    "Select-String 'railway' README.md -CaseSensitive:$false  (deployment section present)"
+  ],
+  "blocked_reason": null,
+  "findings": "All verification commands passed. README.md created at project root with all required sections: overview, architecture diagram, prerequisites, Docker quick start, local dev guide, environment variables table (all 11 vars from .env.example), curl examples for create/redirect/list/delete/per-URL analytics/global analytics, test instructions (mvn test, Docker required note), Railway deployment guide with CloudAMQP instructions for RabbitMQ, known limitations, and demo flow. KIRO_PROGRESS.md updated with FEAT-004 phase and final DONE status. Verification results: Test-Path README.md=True, Test-Path KIRO_PROGRESS.md=True, Select-String railway=3 matches found."
+}

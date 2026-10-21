@@ -149,4 +149,69 @@ docker compose build                    EXIT 0  ✅ (image url-shortner-app:late
 
 ### Next Action
 
-Proceed to FEAT-004 (Final verification / README / deployment guide).
+~~Proceed to FEAT-004 (Final verification / README / deployment guide).~~ — COMPLETED
+
+---
+
+## FEAT-004 — README and Progress Log
+**Status:** COMPLETED  
+**Commit:** docs: FEAT-004 README and progress log
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `README.md` | **CREATED** — Full project documentation: overview, architecture diagram, prerequisites, Docker quick start, local dev guide (start services, set env vars, run backend + frontend dev server), environment variables table, API reference with curl examples for all core flows, test instructions, frontend production build notes, Railway deployment guide (PostgreSQL + Redis plugins, CloudAMQP for RabbitMQ), smoke test commands, known limitations, demo flow |
+| `KIRO_PROGRESS.md` | **UPDATED** — FEAT-004 phase appended; final status recorded |
+
+### Commands Run
+
+```
+Test-Path README.md              → True  ✅
+Test-Path KIRO_PROGRESS.md       → True  ✅
+Select-String 'railway' README.md -CaseSensitive:$false  → matches found  ✅
+```
+
+### Verification Results
+
+- `README.md` created at project root with all required sections:
+  - Project overview ✅
+  - Architecture text diagram ✅
+  - Prerequisites table ✅
+  - Docker quick start (`docker compose up --build`) ✅
+  - Local dev without Docker (start services, set env vars, `mvn spring-boot:run`, `npm run dev`) ✅
+  - Environment variables table (all vars from `.env.example`) ✅
+  - API demo section with curl examples for create / redirect / list / delete / per-URL analytics / global analytics ✅
+  - Test command (`mvn test`, Docker required note) ✅
+  - Railway deployment guide (PostgreSQL, Redis, CloudAMQP, env vars, health check, smoke test) ✅
+  - Known limitations (RabbitMQ on Railway, dev credentials, rate limits, HTTPS, async delay) ✅
+  - Demo flow ✅
+
+### Unresolved Issues
+
+None.
+
+---
+
+## FINAL STATUS: DONE — project ready for deployment
+
+All four feature phases completed:
+
+| Phase | Feature | Status |
+|-------|---------|--------|
+| FEAT-001 | Backend defect fixes (deps, schema, security, analytics, config) | ✅ COMPLETED |
+| FEAT-002 | Integration tests (12 tests, all passing) | ✅ COMPLETED |
+| FEAT-003 | React + Vite frontend, Docker multi-stage build, Railway config | ✅ COMPLETED |
+| FEAT-004 | README and progress log | ✅ COMPLETED |
+
+### Definition of Done — Checklist
+
+- [x] Maven backend builds and tests pass (`mvn test`: 12/12 tests pass)
+- [x] Vite production build passes (`npm run build`: EXIT 0)
+- [x] Fresh-database Flyway migration succeeds (V1 + V2 + V3 applied; JPA schema validation passes)
+- [x] URL create → redirect → analytics flow implemented end-to-end
+- [x] Auth/ownership checks enforced; secrets not hardcoded or logged
+- [x] Docker image builds (`docker compose build`: EXIT 0)
+- [x] Compose local startup instructions documented in README
+- [x] Railway deployment guide complete with env vars, health check, and smoke tests
+- [x] README documents setup, test, deploy, environment variables, known limitations, and demo flow
