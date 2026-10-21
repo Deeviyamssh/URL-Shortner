@@ -1,0 +1,48 @@
+{
+  "id": "FEAT-001",
+  "type": "fix",
+  "description": "Fix all backend defects: pom.xml dependencies, package cleanup, Flyway V3 migration, entity/DTO/service schema alignment, Redis config, security logging cleanup, SecurityConfig static asset permissions, rate limiter scope, analytics ownership scoping, exception handlers, and getAuthenticatedOwner null fix.",
+  "status": "completed",
+  "steps": [
+    "1. pom.xml — Replace springdoc-openapi-ui:1.8.0 with org.springdoc:springdoc-openapi-starter-webmvc-ui:2.5.0. Remove org.testcontainers:redis (groupId doesn't have this artifact). Add org.apache.commons:commons-lang3:3.14.0 compile dependency. Add org.flywaydb:flyway-database-postgresql (no version, managed by Boot BOM).",
+    "2. Delete src/main/java/com/example/urlshortener/repository/CounterRepository.java — this file only contains a comment; the real CounterRepository is at the root package and is correctly imported by CounterService.",
+    "3. Create src/main/resources/db/migration/V3__relax_click_event_nulls.sql: ALTER TABLE click_events ALTER COLUMN ip_address DROP NOT NULL; ALTER COLUMN user_agent DROP NOT NULL; ALTER COLUMN referrer DROP NOT NULL; ADD COLUMN IF NOT EXISTS event_id UUID; CREATE UNIQUE INDEX IF NOT EXISTS idx_click_events_event_id ON click_events(event_id) WHERE event_id IS NOT NULL;",
+    "4. src/main/java/com/example/urlshortener/entity/ClickEvent.java — add field: @Column(name='event_id', unique=true) private UUID eventId; with getter/setter. Import java.util.UUID. Do NOT set nullable=false.",
+    "5. src/main/java/com/example/urlshortener/dto/ClickEventDto.java — add field: private UUID eventId; with getter/setter. Import java.util.UUID.",
+    "6. src/main/java/com/example/urlshortener/service/UrlService.java — in recordClick(), add: clickEvent.setEventId(UUID.randomUUID()); before publishClickEvent call. Import java.util.UUID.",
+    "7. src/main/java/com/example/urlshortener/service/ClickEventConsumer.java — after creating ClickEvent entity, add: clickEvent.setEventId(clickEventDto.getEventId()); Wrap clickEventRepository.save() in try-catch for DataIntegrityViolationException — if caught, log.debug duplicate and return.",
+    "8. src/main/resources/application.properties — change spring.data.redis.host=redis to spring.data.redis.host=${SPRING_DATA_REDIS_HOST:localhost}. Change spring.data.redis.port=6379 to spring.data.redis.port=${SPRING_DATA_REDIS_PORT:6379}.",
+    "9. src/main/java/com/example/urlshortener/security/ApiKeyAuthenticationService.java — add SLF4J logger. Replace all System.out.println with log.debug. REMOVE completely the line that prints the raw secretKey value ('Secret key received: [...]'). Other lines may be converted to log.debug but must not include secretKey value.",
+    "10. src/main/java/com/example/urlshortener/security/ApiKeyAuthenticationFilter.java — add SLF4J logger. Replace all System.out.println with log.debug. The line printing secret key header VALUE must be replaced with: log.debug('Secret key header {} present: {}', secretKeyHeader, secretKey != null) — log presence only, never value.",
+    "11. src/main/java/com/example/urlshortener/security/SecurityConfig.java — in authorizeHttpRequests, before .anyRequest().denyAll() add: .requestMatchers('/', '/index.html', '/favicon.ico', '/favicon.svg', '/vite.svg', '/assets/**', '/*.js', '/*.css', '/*.map').permitAll()",
+    "12. src/main/java/com/example/urlshortener/config/WebConfig.java — replace .addPathPatterns('/**') with .addPathPatterns('/api/**', '/{shortCode}').excludePathPatterns('/actuator/**', '/', '/index.html', '/favicon.ico', '/favicon.svg', '/vite.svg', '/assets/**', '/*.js', '/*.css', '/*.map')",
+    "13. src/main/java/com/example/urlshortener/dto/UrlDetailsResponse.java — add field: private long clickCount; with getter/setter.",
+    "14. src/main/java/com/example/urlshortener/repository/ClickEventRepository.java — add: long countByUrlMapping(UrlMapping urlMapping); Also add scoped query methods for owner-filtered global clicks: findByUrlMappingInOrderByClickedAtDesc(List<UrlMapping>), findByUrlMappingInAndClickedAtBetweenOrderByClickedAtDesc(...), findByUrlMappingInAndIpAddressOrderByClickedAtDesc(...), findByUrlMappingInAndClickedAtBetweenAndIpAddressOrderByClickedAtDesc(...).",
+    "15. src/main/java/com/example/urlshortener/service/UrlService.java — in mapToUrlDetailsResponse() and all inline UrlDetailsResponse construction in getUrlDetails() and updateUrlMapping(), add: response.setClickCount(clickEventRepository.countByUrlMapping(urlMapping)). Update getGlobalClickEvents() to accept owner String as first param; filter all query paths to only urlMappings owned by that owner using the new UrlMappingRepository.findByCreatedBy(owner) lookup and new ClickEventRepository scoped queries.",
+    "16. src/main/java/com/example/urlshortener/controller/UrlController.java — in getGlobalClicks(), pass owner as first arg to urlService.getGlobalClickEvents(owner, startTime, endTime, ipAddress, limit). In getAuthenticatedOwner(), replace String owner = 'anonymous'; with String owner = null;",
+    "17. src/main/java/com/example/urlshortener/exception/GlobalExceptionHandler.java — add handlers for IllegalArgumentException (HTTP 409 Conflict) and NoSuchElementException (HTTP 404). Import java.util.NoSuchElementException."
+  ],
+  "acceptance_criteria": [
+    "mvn clean compile -q exits 0 with no errors",
+    "mvn dependency:resolve -q exits 0 — all declared dependencies resolve",
+    "V3 migration file exists at src/main/resources/db/migration/V3__relax_click_event_nulls.sql",
+    "ClickEvent entity has eventId UUID field",
+    "ClickEventDto has eventId UUID field",
+    "No System.out.println in ApiKeyAuthenticationService or ApiKeyAuthenticationFilter",
+    "No raw secret key value is printed or logged anywhere in the security package",
+    "SecurityConfig permits /, /index.html, /assets/** before anyRequest().denyAll()",
+    "WebConfig rate limiter is scoped to /api/** and /{shortCode} only",
+    "UrlDetailsResponse has clickCount field",
+    "ClickEventRepository has countByUrlMapping method",
+    "getGlobalClickEvents filters to owner's URLs only",
+    "getAuthenticatedOwner returns null (not 'anonymous') when no API key",
+    "GlobalExceptionHandler handles IllegalArgumentException (409) and NoSuchElementException (404)"
+  ],
+  "verification": [
+    "mvn clean compile -q  (exit 0)",
+    "mvn dependency:resolve -q  (exit 0, no missing artifacts)",
+    "mvn test -q  (if Docker available; else document blocker)"
+  ],
+  "blocked_reason": null,
+  "findings": "All 17 steps implemented and verified.\n\nActual command output:\n- 'mvn clean compile -q' => EXIT 0 (no errors)\n- 'mvn dependency:resolve -q' => EXIT 0 (all deps resolved)\n- 'mvn test -q' => EXIT 0 (no test sources; no failures)\n\nNotes:\n- Step 1 deviation: flyway-database-postgresql is NOT managed by Spring Boot 3.2.5 BOM (BOM uses Flyway 9.22.x where PostgreSQL is bundled in flyway-core). The dependency was removed instead of added — adding it with no version caused a build failure. flyway-core alone is sufficient for Spring Boot 3.2.5 + PostgreSQL.\n- testcontainers:redis removed (artifact doesn't exist under org.testcontainers group ID; Redis testing uses GenericContainer from testcontainers:testcontainers).\n- commons-lang3:3.14.0 added as compile dependency (was already used in UrlService/UrlController via StringUtils but not declared in pom.xml).\n- V3 migration drops NOT NULL on ip_address, user_agent, referrer and makes event_id optional (V1 had event_id NOT NULL — V3 drops that constraint and creates a partial unique index).\n- ClickEventConsumer save() wrapped in DataIntegrityViolationException catch for idempotent retry deduplication via event_id.\n- getAuthenticatedOwner now returns null instead of 'anonymous' — downstream null-safe via StringUtils.equals which treats null correctly."
+}
