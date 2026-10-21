@@ -1,0 +1,37 @@
+{
+  "id": "FEAT-002",
+  "type": "test",
+  "description": "Create integration tests for the backend. No test files currently exist. Tests use JUnit 5, Testcontainers (PostgreSQL + RabbitMQ already in pom; Redis via GenericContainer), and TestRestTemplate. Depends on FEAT-001 being complete (compilation must succeed before tests can be written).",
+  "status": "completed",
+  "steps": [
+    "1. Create src/test/resources/application-test.properties with: spring.jpa.hibernate.ddl-auto=validate, spring.flyway.enabled=true, logging.level.com.example.urlshortener=WARN (reduce noise in test output).",
+    "2. Create src/test/java/com/example/urlshortener/BaseIntegrationTest.java — abstract base class annotated with @SpringBootTest(webEnvironment=RANDOM_PORT), @Testcontainers. Declare static @Container fields: PostgreSQLContainer<?> postgres (image postgres:15-alpine), RabbitMQContainer rabbitmq (image rabbitmq:4-management-alpine), GenericContainer<?> redis (image redis:7-alpine, port 6379). Use @DynamicPropertySource static method to set spring.datasource.url/username/password, spring.rabbitmq.host/port/username/password, spring.data.redis.host/port from container instances.",
+    "3. Create src/test/java/com/example/urlshortener/UrlIntegrationTest.java extending BaseIntegrationTest. Inject @Autowired TestRestTemplate restTemplate and @LocalServerPort int port.",
+    "4. In UrlIntegrationTest add helper: HttpHeaders authHeaders() returning headers with X-Access-Key: dev-access-key and X-Secret-Key: dev-secret-key (ApiKeyInitializer creates these on first startup).",
+    "5. Test: contextLoads() — assert restTemplate.getForEntity('/actuator/health', String.class).getStatusCode() == 200.",
+    "6. Test: createUrl_validRequest_returns200() — POST /api/urls with authHeaders and body {originalUrl:https://example.com}; assert 200, body has shortCode.",
+    "7. Test: createUrl_duplicateAlias_returns409() — POST /api/urls with customAlias:'test-alias' twice; assert second returns 409.",
+    "8. Test: createUrl_invalidUrl_returns400() — POST /api/urls with originalUrl:'not-a-url'; assert 400.",
+    "9. Test: redirect_validShortCode_returns302() — use restTemplate with FOLLOW_REDIRECTS=false; GET /{shortCode}; assert 302 and Location header == https://example.com.",
+    "10. Test: redirect_unknownShortCode_returns404() — GET /unknown-xyz-404; assert 404.",
+    "11. Test: auth_noHeaders_returns401() — GET /api/urls without auth headers; assert 401.",
+    "12. Test: auth_wrongSecret_returns401() — GET /api/urls with X-Access-Key: dev-access-key, X-Secret-Key: wrong; assert 401.",
+    "13. Test: listUrls_returnsOnlyOwnUrls() — create URL as dev-user, list; assert returned list contains the created URL and has clickCount field.",
+    "14. Test: deleteUrl_ownership_returns404ForOtherOwner() — create URL as dev-user; attempt DELETE with different (nonexistent) access key; assert 401 or 404.",
+    "15. Test: clickAnalytics_afterRedirect_recordsClick() — create URL, perform redirect GET, sleep 500ms for async processing, GET /api/urls/{id}/clicks; assert response list is non-empty.",
+    "16. Test: globalClicks_scopedToOwner() — GET /api/urls/clicks; assert all returned items have shortCodes belonging to dev-user's URLs only."
+  ],
+  "acceptance_criteria": [
+    "mvn test exits 0 when Docker is available",
+    "All 12 test methods in UrlIntegrationTest pass",
+    "contextLoads test confirms Flyway V1+V2+V3 run without error",
+    "No test uses @MockBean for Redis, RabbitMQ, or PostgreSQL — real containers required",
+    "Test output shows no secret key values in logs"
+  ],
+  "verification": [
+    "mvn test -q  (requires Docker; exit 0 means all tests pass)",
+    "mvn test 2>&1 | Select-String 'BUILD'  (PowerShell; should show BUILD SUCCESS)"
+  ],
+  "blocked_reason": null,
+  "findings": "COMPLETED. Tests run: 12, Failures: 0, Errors: 0, Skipped: 0. BUILD SUCCESS.\n\nFixes applied during test implementation:\n1. Upgraded Testcontainers 1.19.8 → 1.20.4 in pom.xml — required for Docker Engine 29+ compatibility.\n2. Created ~/.docker-java.properties with api.version=1.44 — Docker Desktop 29.x dropped support for older Docker API versions (< 1.44), which caused Testcontainers to fail with BadRequestException Status 400.\n3. BaseIntegrationTest uses static container start (shared across all tests) instead of @Container annotation with @Testcontainers — avoids re-starting containers per test class.\n4. deleteUrl_ownership_returns401OrNotFound uses Java 11 java.net.http.HttpClient instead of TestRestTemplate — Apache HttpClient 4 throws ResourceAccessException on 401 DELETE responses because it tries to re-authenticate in streaming mode.\n5. test-output is confirmed: all 12 tests pass including contextLoads (Flyway V1+V2+V3), createUrl, duplicateAlias→409, invalidUrl→400, redirect→302, unknownCode→404, auth→401, listUrls, deleteOwnership, clickAnalytics, and globalClicks."
+}
