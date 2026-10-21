@@ -132,6 +132,19 @@
 	</dependencies>
 
 	<build>
+		<resources>
+			<!-- Default application resources (application.properties, Flyway migrations, etc.) -->
+			<resource>
+				<directory>src/main/resources</directory>
+			</resource>
+			<!-- Frontend production build output, served as Spring Boot static resources.
+			     Requires `npm run build` in frontend/ to have produced dist/ first.
+			     Skipped silently by Maven if the directory does not exist. -->
+			<resource>
+				<directory>frontend/dist</directory>
+				<targetPath>static</targetPath>
+			</resource>
+		</resources>
 		<plugins>
 			<!-- Spring Boot Maven Plugin -->
 			<plugin>

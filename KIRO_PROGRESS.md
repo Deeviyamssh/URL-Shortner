@@ -204,6 +204,56 @@ All four feature phases completed:
 | FEAT-003 | React + Vite frontend, Docker multi-stage build, Railway config | ✅ COMPLETED |
 | FEAT-004 | README and progress log | ✅ COMPLETED |
 
+---
+
+## Convergence — Cross-FEAT Integration Verification
+**Status:** COMPLETED (iteration 1, no review verdict file present)
+**Commit:** fix: convergence — cross-FEAT integration fixes
+
+### Verification Suite Run
+
+| Check | Command | Result |
+|-------|---------|--------|
+| Backend build | `mvn clean package -DskipTests -q` | EXIT 0 ✅ |
+| Frontend build | `cd frontend; npm run build` | EXIT 0 ✅ (dist/index.html + 2 assets) |
+| Integration tests | `mvn test` | Tests run: 12, Failures: 0, Errors: 0, Skipped: 0 — BUILD SUCCESS ✅ |
+| Docker available | `docker info` | Yes (Engine 29.7.2) ✅ |
+| Frontend in JAR | inspect `BOOT-INF/classes/static/*` | index.html + assets/index-*.css/js present ✅ |
+| Build w/o frontend dist | `mvn clean compile -q` (dist temporarily moved) | EXIT 0 ✅ (resource dir silently skipped) |
+
+### Cross-FEAT Seam Issues Found & Fixed
+
+| # | Seam | Issue | Fix |
+|---|------|-------|-----|
+| 1 | BE→FE data (FEAT-001 × FEAT-003) | `UrlService.convertToDto()` did not set `eventId` on `ClickEventDto`, but frontend `Analytics.jsx` uses `click.eventId` as the React row key (falls back to array index — harmless but loses stable keys across renders) | `convertToDto()` now sets `dto.setEventId(clickEvent.getEventId())` |
+| 2 | FE→BE serving (FEAT-003 × BE packaging) | `mvn package` did not bundle the Vite build into the JAR; only the Dockerfile copied `frontend/dist` into `src/main/resources/static`. So local `java -jar` production mode served no frontend. | Added a `<resources>` entry in `pom.xml` mapping `frontend/dist` → `static` (classpath). Uses built-in `maven-resources-plugin`, no new dependency. Silently skipped when `dist/` is absent, so fresh checkouts and backend-only CI still build. |
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/main/java/com/example/urlshortener/service/UrlService.java` | `convertToDto()` now sets `eventId` from the entity |
+| `pom.xml` | Added `<resources>` block: default `src/main/resources` + `frontend/dist` mapped to `static` targetPath |
+
+### API Path Alignment Check (no fix needed)
+
+| Frontend (`api.js`) | Backend (`UrlController`) | Match |
+|--------------------|--------------------------|-------|
+| POST `/api/urls` | `@RequestMapping("/api/urls")` + `@PostMapping` | ✅ |
+| GET `/api/urls` | `@GetMapping` | ✅ |
+| DELETE `/api/urls/${id}` | `@DeleteMapping("/{id}")` | ✅ |
+| GET `/api/urls/${id}/clicks` | `@GetMapping("/{id}/clicks")` | ✅ |
+| GET `/api/urls/clicks` | `@GetMapping("/clicks")` | ✅ |
+
+### Schema Validation Check (no fix needed)
+
+- `spring.jpa.hibernate.ddl-auto=validate` passes against Flyway V1+V2+V3 on a fresh Testcontainers PostgreSQL (confirmed by `contextLoads` test).
+- `UrlMapping.createdBy` entity is `@Column(nullable=true)` while V2 sets the DB column NOT NULL — Hibernate validate allows this (entity is more permissive than DB); no failure observed.
+
+### Unresolved Issues
+
+None. All verification checks pass. Awaiting review verdict (`verdict.json`) for iteration 2+.
+
 ### Definition of Done — Checklist
 
 - [x] Maven backend builds and tests pass (`mvn test`: 12/12 tests pass)

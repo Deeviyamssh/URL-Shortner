@@ -523,6 +523,7 @@ public class UrlService {
         dto.setIpAddress(clickEvent.getIpAddress());
         dto.setUserAgent(clickEvent.getUserAgent());
         dto.setReferrer(clickEvent.getReferrer());
+        dto.setEventId(clickEvent.getEventId());
         return dto;
     }
 

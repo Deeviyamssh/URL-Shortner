@@ -1,6 +1,8 @@
 /target/
 /.idea/workspace.xml
+/.idea/
 /.vscode/
+/.m2/
 *.log
 app-log.txt
 .env
