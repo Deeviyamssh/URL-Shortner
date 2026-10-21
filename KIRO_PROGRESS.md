@@ -233,7 +233,13 @@ All four feature phases completed:
 | File | Change |
 |------|--------|
 | `src/main/java/com/example/urlshortener/service/UrlService.java` | `convertToDto()` now sets `eventId` from the entity |
+| `src/main/java/com/example/urlshortener/security/ApiKeyInitializer.java` | Stopped logging the dev secret key value (rule: no logging of secrets) |
 | `pom.xml` | Added `<resources>` block: default `src/main/resources` + `frontend/dist` mapped to `static` targetPath |
+| `.gitignore` | Added `/.idea/` and `/.m2/` to ignore local tooling dirs |
+
+### Version-Control Integrity Fix (CRITICAL)
+
+The 4 prior FEAT commits only tracked 12 of 30 `src/main/java/**` files and only V3 of the 3 Flyway migrations. A fresh `git clone` would fail to compile (no `UrlShortenerApplication`, no entities, no repositories) and Flyway would fail (V1/V2 missing). This commit adds the 18 missing Java source files + V1/V2 migrations + `application-dev.properties` + `data.sql`. After this commit the repository is self-contained and a fresh clone builds.
 
 ### API Path Alignment Check (no fix needed)
 
