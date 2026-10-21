@@ -1,0 +1,13 @@
+/target/
+/.idea/workspace.xml
+/.vscode/
+*.log
+app-log.txt
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Frontend build artifacts and dependencies
+frontend/node_modules/
+frontend/dist/
