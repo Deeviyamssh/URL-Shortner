@@ -35,14 +35,14 @@ docker compose up --build
 
 The application will be available at `http://localhost:8080` once all services are healthy (PostgreSQL, Redis, and RabbitMQ must pass their health checks before the app starts).
 
-Default dev credentials printed at startup:
+Default dev credentials created on first run:
 
 ```
-Access Key: <printed to stdout on first run>
-Secret Key: <printed to stdout on first run>
+Access Key: dev-access-key (printed to logs on first startup)
+Secret Key: dev-secret-key (NOT printed — see ApiKeyInitializer source code)
 ```
 
-> **Important:** Change these in production. See the [Environment Variables](#environment-variables) section.
+> **Important:** These are predictable development defaults. In production, set `APP_DEV_API_KEY_ENABLED=false` and insert your own API key into the database. See the [Railway Deployment](#railway-deployment) section.
 
 ## Local Development (without Docker)
 
@@ -117,8 +117,9 @@ The Vite dev server runs on `http://localhost:5173` and proxies all `/api` reque
 | `SPRING_RABBITMQ_PORT` | `5672` | No | RabbitMQ AMQP port |
 | `SPRING_RABBITMQ_USERNAME` | `guest` | Yes (prod) | RabbitMQ username |
 | `SPRING_RABBITMQ_PASSWORD` | `guest` | Yes (prod) | RabbitMQ password |
-| `APP_BASE_URL` | `http://localhost:8080` | Yes (prod) | Public base URL for short links |
-| `SERVER_PORT` | `8080` | No | HTTP listen port |
+| `PORT` | `8080` | Yes (Railway) | Injected by Railway — app listens on this port |
+| `SERVER_PORT` | `8080` | No | Alternative port override (used if `PORT` is not set) |
+| `APP_DEV_API_KEY_ENABLED` | `true` | Set `false` in prod | Controls auto-creation of predictable dev API key |
 
 Copy `.env.example` to `.env` and fill in real values. Never commit `.env`.
 
@@ -141,10 +142,12 @@ Response:
 ```json
 {
   "shortCode": "ex",
-  "shortUrl": "http://localhost:8080/ex",
-  "originalUrl": "https://example.com"
+  "originalUrl": "https://example.com",
+  "createdBy": "dev-user"
 }
 ```
+
+The short URL is `{app_origin}/{shortCode}` (e.g., `http://localhost:8080/ex`). The frontend constructs this from the browser origin.
 
 ### Redirect (public — no auth required)
 
@@ -211,12 +214,14 @@ mvn clean compile -q
 
 ## Frontend Production Build
 
-The frontend build output is copied into `src/main/resources/static` during the Docker multi-stage build. For a local `mvn package` with the frontend included:
+The `pom.xml` includes a `<resources>` entry that automatically bundles `frontend/dist/` into the JAR's `static` directory. For a local `mvn package` with the frontend included:
 
 ```bash
 cd frontend && npm ci && npm run build
-# Copy dist/ to src/main/resources/static/ manually, then:
 mvn clean package -DskipTests
+```
+
+The Docker multi-stage build does this automatically (Stage 1 builds the frontend, Stage 2 copies `dist/` into `src/main/resources/static` before `mvn package`).
 ```
 
 ## Railway Deployment
@@ -245,19 +250,42 @@ mvn clean package -DskipTests
 | `SPRING_DATASOURCE_USERNAME` | From Railway PostgreSQL plugin |
 | `SPRING_DATASOURCE_PASSWORD` | From Railway PostgreSQL plugin |
 | `SPRING_DATA_REDIS_HOST` | From Railway Redis plugin |
-| `SPRING_DATA_REDIS_PORT` | `6379` |
+| `SPRING_DATA_REDIS_PORT` | From Railway Redis plugin |
 | `SPRING_RABBITMQ_HOST` | From CloudAMQP |
-| `SPRING_RABBITMQ_PORT` | From CloudAMQP |
+| `SPRING_RABBITMQ_PORT` | From CloudAMQP (usually `5672`) |
 | `SPRING_RABBITMQ_USERNAME` | From CloudAMQP |
 | `SPRING_RABBITMQ_PASSWORD` | From CloudAMQP |
-| `APP_BASE_URL` | Your Railway public URL, e.g. `https://your-app.railway.app` |
-| `SERVER_PORT` | `8080` |
+| `APP_DEV_API_KEY_ENABLED` | `false` (prevents predictable dev credentials) |
 
 ### 4. Deploy
 
 Railway detects `railway.toml` and builds the Dockerfile automatically. The health check endpoint is `/actuator/health`.
 
-### 5. Smoke test
+### 5. Create a production API key
+
+Since `APP_DEV_API_KEY_ENABLED=false` prevents auto-created dev credentials, you need to insert an API key manually. After the first deploy, run this SQL against your Railway PostgreSQL database (using Railway's query tool or `psql`):
+
+```sql
+INSERT INTO api_keys (owner, access_key, hashed_key, created_at)
+VALUES (
+  'your-owner-name',
+  'your-access-key',
+  '$2a$10$YOUR_BCRYPT_HASH_HERE',
+  NOW()
+);
+```
+
+To generate a BCrypt hash for your secret key:
+
+```bash
+# Using Python:
+python -c "import bcrypt; print(bcrypt.hashpw(b'your-secret-key', bcrypt.gensalt()).decode())"
+
+# Or using htpasswd (Apache utility):
+htpasswd -nbBC 10 "" 'your-secret-key' | tr -d ':\n'
+```
+
+### 6. Smoke test
 
 ```bash
 # Replace with your Railway URL
@@ -280,7 +308,7 @@ curl -v $BASE/<shortCode>
 ## Known Limitations
 
 - **RabbitMQ on Railway**: There is no native Railway add-on. CloudAMQP free tier (Little Lemur) is limited to 1 million messages/month and 20 concurrent connections. Sufficient for light production use.
-- **Dev credentials printed at startup**: On first run the application prints generated API credentials to stdout. Rotate these before exposing the service publicly — delete the auto-generated key row and restart with a known value, or implement a seed mechanism.
+- **Dev credentials on first run**: On a fresh database the application auto-creates a predictable dev API key (`dev-access-key` / `dev-secret-key`). The access key is logged; the secret key is NOT logged. Set `APP_DEV_API_KEY_ENABLED=false` in production and insert your own API key via SQL or a migration.
 - **Rate limiting**: IP-based (5 req/min) and API-key-based (100 req/hr) limits are applied via Redis. Adjust `rate.limit.*` properties for your traffic profile.
 - **No HTTPS termination**: The application speaks plain HTTP. Use a reverse proxy (Railway's built-in, nginx, etc.) for TLS in production.
 - **Analytics async delay**: Click events are processed via RabbitMQ asynchronously. There may be a brief delay (typically under 1 second) before a redirect registers in analytics.
@@ -290,9 +318,9 @@ curl -v $BASE/<shortCode>
 ```bash
 BASE=http://localhost:8080
 
-# 1. Get credentials from startup logs, then:
-ACCESS=<your-access-key>
-SECRET=<your-secret-key>
+# 1. Use the dev credentials (dev-access-key / dev-secret-key) or your own API key.
+ACCESS=dev-access-key
+SECRET=dev-secret-key
 
 # 2. Create a short URL
 curl -s -X POST $BASE/api/urls \

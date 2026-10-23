@@ -18,7 +18,8 @@ public class RedirectController {
         this.urlService = urlService;
     }
 
-    @GetMapping("/{shortCode}")
+    // Only match single-segment paths without dots (excludes static files like index.html, favicon.ico)
+    @GetMapping("/{shortCode:[^.]+}")
     public ResponseEntity<Void> redirect(@PathVariable String shortCode, HttpServletRequest request) {
         String originalUrl = urlService.getOriginalUrl(shortCode);
         if (originalUrl == null) {

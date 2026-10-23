@@ -15,12 +15,19 @@ public class ApiKeyInitializer implements CommandLineRunner {
     private static final Logger log = LoggerFactory.getLogger(ApiKeyInitializer.class);
     private final ApiKeyRepository apiKeyRepository;
 
+    @org.springframework.beans.factory.annotation.Value("${app.dev-api-key.enabled:true}")
+    private boolean devApiKeyEnabled;
+
     public ApiKeyInitializer(ApiKeyRepository apiKeyRepository) {
         this.apiKeyRepository = apiKeyRepository;
     }
 
     @Override
     public void run(String... args) throws Exception {
+        if (!devApiKeyEnabled) {
+            log.info("Dev API key creation is disabled (app.dev-api-key.enabled=false). Skipping.");
+            return;
+        }
         // Check if any API key exists
         if (apiKeyRepository.count() == 0) {
             log.info("No API keys found. Creating a default API key for development.");
@@ -49,7 +56,7 @@ public class ApiKeyInitializer implements CommandLineRunner {
             log.info("  Owner: {}", owner);
             log.info("  Access Key (header X-Access-Key): {}", accessKey);
             log.info("  Secret Key: set for development (see ApiKeyInitializer source). Not logged for security.");
-            log.info("WARNING: This is for development only. Do not use in production.");
+            log.info("WARNING: This is for development only. Set app.dev-api-key.enabled=false in production.");
         } else {
             log.info("API keys already exist in the database. Skipping default key creation.");
         }
