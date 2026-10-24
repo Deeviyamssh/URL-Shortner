@@ -166,7 +166,7 @@ server.port=${PORT:${SERVER_PORT:8080}}
 | `SPRING_RABBITMQ_PASSWORD` | RabbitMQ password |
 | `APP_DEV_API_KEY_ENABLED` | Set `false` in production |
 
-A `railway.toml` is also included for Railway deployment.
+A `railway.toml` was previously included for Railway deployment. The app deploys on Render using the `Dockerfile` directly.
 
 **Provisioning a production API key** (when `APP_DEV_API_KEY_ENABLED=false`):
 
