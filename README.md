@@ -1,22 +1,69 @@
 # URL Shortener
 
-A full-stack URL shortener built with Spring Boot 3, React + Vite, PostgreSQL, Redis, and RabbitMQ. The React single-page application is served directly from the Spring Boot JAR.
+A full-stack URL shortener with API-key authentication, Redis caching, asynchronous click tracking via RabbitMQ, and a React single-page application served from the same Spring Boot backend.
+
+**Live demo:** [https://url-shortner-kxv7.onrender.com](https://url-shortner-kxv7.onrender.com)
+
+**Source code:** [https://github.com/Deeviyamssh/URL-Shortner](https://github.com/Deeviyamssh/URL-Shortner)
 
 ## Architecture
 
+```mermaid
+graph TB
+    Browser["Browser (React SPA)"]
+    SB["Spring Boot 3 (port 8080)"]
+    PG[("PostgreSQL 15<br/>Flyway migrations")]
+    Redis[("Redis 7<br/>Cache + Rate Limiting")]
+    RabbitMQ["RabbitMQ 4<br/>Click Event Queue"]
+
+    Browser -->|"GET / (SPA)"| SB
+    Browser -->|"GET /{shortCode} (redirect)"| SB
+    Browser -->|"GET/POST/DELETE /api/urls/*"| SB
+
+    SB -->|"JPA / Flyway"| PG
+    SB -->|"Cache-aside<br/>URL lookups"| Redis
+    SB -->|"Rate limit<br/>Lua token bucket"| Redis
+    SB -->|"Publish click event"| RabbitMQ
+    RabbitMQ -->|"Consume + persist"| SB
+    SB -->|"Save click event"| PG
 ```
-Browser
-  │
-  ▼
-Spring Boot (port 8080)
-  ├── /            → React SPA (served from static resources)
-  ├── /{shortCode} → Public redirect (no auth required)
-  └── /api/urls/*  → REST API (API key auth required)
-        │
-        ├── PostgreSQL  – URL mappings + click events (Flyway-managed schema)
-        ├── Redis       – URL redirect cache + rate limiting
-        └── RabbitMQ    – Async click-event processing (fire-and-forget)
-```
+
+**Request flow:**
+
+- **Shorten:** Browser → `POST /api/urls` → Spring Boot validates API key → generates Base62 short code from a PostgreSQL sequence → stores mapping in PostgreSQL → returns short code.
+- **Redirect:** Browser → `GET /{shortCode}` → Spring Boot checks Redis cache → on miss, queries PostgreSQL and populates cache (TTL 1 hour) → returns 302 redirect → publishes a click event to RabbitMQ (fire-and-forget).
+- **Analytics:** RabbitMQ consumer picks up the click event → looks up the URL mapping → persists the click event to PostgreSQL with a UUID for idempotent deduplication.
+- **Management:** All `/api/urls/*` endpoints require API-key headers and enforce ownership — users can only see, modify, or query analytics for their own URLs.
+
+## Features
+
+- **URL shortening** with auto-generated Base62 codes (backed by a PostgreSQL sequence for collision-free uniqueness)
+- **Custom aliases** with validation (alphanumeric, hyphens, underscores only)
+- **Public redirects** — no authentication required to follow a short link
+- **API-key authentication** — `X-Access-Key` and `X-Secret-Key` headers; secret is BCrypt-hashed in the database
+- **Owner-scoped access** — users can only list, update, delete, and view analytics for their own URLs
+- **Click analytics** — per-URL and global, with IP address, user agent, referrer, and timestamp
+- **Redis caching** — cache-aside pattern for redirect lookups with configurable TTL
+- **Rate limiting** — IP-based (5 req/min) and API-key-based (100 req/hr) via a Redis Lua token-bucket script
+- **Asynchronous click tracking** — RabbitMQ decouples redirect response time from analytics persistence
+- **React SPA** — built with Vite, served from the Spring Boot JAR in production; dev proxy for local development
+
+## Technology Stack
+
+| Technology | Role |
+|------------|------|
+| Java 21 | Backend language |
+| Spring Boot 3.2.5 | REST API, security, DI, actuator health endpoint |
+| Spring Data JPA | ORM layer with Hibernate schema validation |
+| PostgreSQL 15 | Primary database for URL mappings, API keys, and click events |
+| Flyway | Schema migrations (V1–V3) |
+| Redis 7 | Redirect cache + distributed rate limiting |
+| RabbitMQ 4 | Asynchronous click-event queue |
+| Spring Security | API-key filter chain, endpoint authorization |
+| BCrypt | Secret key hashing |
+| React 18 + Vite 5 | Frontend SPA |
+| Docker (multi-stage) | Build (Node → Maven → JRE) and local Compose |
+| Testcontainers | Integration testing with real PostgreSQL, Redis, and RabbitMQ |
 
 ## Prerequisites
 
@@ -33,16 +80,9 @@ Spring Boot (port 8080)
 docker compose up --build
 ```
 
-The application will be available at `http://localhost:8080` once all services are healthy (PostgreSQL, Redis, and RabbitMQ must pass their health checks before the app starts).
+The application will be available at `http://localhost:8080` once all services are healthy. PostgreSQL, Redis, and RabbitMQ must pass their health checks before the app starts.
 
-Default dev credentials created on first run:
-
-```
-Access Key: dev-access-key (printed to logs on first startup)
-Secret Key: dev-secret-key (NOT printed — see ApiKeyInitializer source code)
-```
-
-> **Important:** These are predictable development defaults. In production, set `APP_DEV_API_KEY_ENABLED=false` and insert your own API key into the database. See the [Railway Deployment](#railway-deployment) section.
+On a fresh database, the app auto-creates a development API key (access key: `dev-access-key`). The secret key is not printed to logs — see `ApiKeyInitializer.java` in the source. Set `APP_DEV_API_KEY_ENABLED=false` in production to disable this.
 
 ## Local Development (without Docker)
 
@@ -71,7 +111,6 @@ $env:SPRING_DATA_REDIS_HOST="localhost"
 $env:SPRING_DATA_REDIS_PORT="6379"
 $env:SPRING_RABBITMQ_HOST="localhost"
 $env:SPRING_RABBITMQ_PORT="5672"
-$env:APP_BASE_URL="http://localhost:8080"
 ```
 
 ```bash
@@ -83,7 +122,6 @@ export SPRING_DATA_REDIS_HOST=localhost
 export SPRING_DATA_REDIS_PORT=6379
 export SPRING_RABBITMQ_HOST=localhost
 export SPRING_RABBITMQ_PORT=5672
-export APP_BASE_URL=http://localhost:8080
 ```
 
 ### 3. Run the backend
@@ -106,20 +144,22 @@ The Vite dev server runs on `http://localhost:5173` and proxies all `/api` reque
 
 ## Environment Variables
 
-| Variable | Default | Required | Description |
-|----------|---------|----------|-------------|
-| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://localhost:5432/urlshortener` | Yes (prod) | PostgreSQL JDBC URL |
-| `SPRING_DATASOURCE_USERNAME` | `user` | Yes (prod) | Database username |
-| `SPRING_DATASOURCE_PASSWORD` | `password` | Yes (prod) | Database password |
-| `SPRING_DATA_REDIS_HOST` | `localhost` | Yes (prod) | Redis hostname |
+All values can be set via environment variables. Defaults are for local development only.
+
+| Variable | Default | Required (prod) | Description |
+|----------|---------|-----------------|-------------|
+| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://localhost:5432/urlshortener` | Yes | PostgreSQL JDBC URL |
+| `SPRING_DATASOURCE_USERNAME` | `user` | Yes | Database username |
+| `SPRING_DATASOURCE_PASSWORD` | `password` | Yes | Database password |
+| `SPRING_DATA_REDIS_HOST` | `localhost` | Yes | Redis hostname |
 | `SPRING_DATA_REDIS_PORT` | `6379` | No | Redis port |
-| `SPRING_RABBITMQ_HOST` | `localhost` | Yes (prod) | RabbitMQ hostname |
+| `SPRING_RABBITMQ_HOST` | `localhost` | Yes | RabbitMQ hostname |
 | `SPRING_RABBITMQ_PORT` | `5672` | No | RabbitMQ AMQP port |
-| `SPRING_RABBITMQ_USERNAME` | `guest` | Yes (prod) | RabbitMQ username |
-| `SPRING_RABBITMQ_PASSWORD` | `guest` | Yes (prod) | RabbitMQ password |
-| `PORT` | `8080` | Yes (Railway) | Injected by Railway — app listens on this port |
+| `SPRING_RABBITMQ_USERNAME` | `guest` | Yes | RabbitMQ username |
+| `SPRING_RABBITMQ_PASSWORD` | `guest` | Yes | RabbitMQ password |
+| `PORT` | `8080` | Set by platform | The application config supports this variable; hosting platforms may inject it (see Deployment) |
 | `SERVER_PORT` | `8080` | No | Alternative port override (used if `PORT` is not set) |
-| `APP_DEV_API_KEY_ENABLED` | `true` | Set `false` in prod | Controls auto-creation of predictable dev API key |
+| `APP_DEV_API_KEY_ENABLED` | `true` | Set `false` in prod | Controls auto-creation of a predictable dev API key |
 
 Copy `.env.example` to `.env` and fill in real values. Never commit `.env`.
 
@@ -134,25 +174,25 @@ curl -s -X POST http://localhost:8080/api/urls \
   -H "Content-Type: application/json" \
   -H "X-Access-Key: <your-access-key>" \
   -H "X-Secret-Key: <your-secret-key>" \
-  -d '{"originalUrl": "https://example.com", "customAlias": "ex"}'
+  -d '{"originalUrl": "https://example.com", "customAlias": "demo"}'
 ```
 
 Response:
 
 ```json
 {
-  "shortCode": "ex",
+  "shortCode": "demo",
   "originalUrl": "https://example.com",
   "createdBy": "dev-user"
 }
 ```
 
-The short URL is `{app_origin}/{shortCode}` (e.g., `http://localhost:8080/ex`). The frontend constructs this from the browser origin.
+The short URL is `{origin}/{shortCode}` (e.g., `http://localhost:8080/demo`). The frontend constructs this from the browser origin.
 
-### Redirect (public — no auth required)
+### Public redirect (no auth required)
 
 ```bash
-curl -v http://localhost:8080/ex
+curl -v http://localhost:8080/demo
 # HTTP/1.1 302  Location: https://example.com
 ```
 
@@ -163,6 +203,8 @@ curl -s http://localhost:8080/api/urls \
   -H "X-Access-Key: <your-access-key>" \
   -H "X-Secret-Key: <your-secret-key>"
 ```
+
+Each item includes a `clickCount` field.
 
 ### Delete a URL
 
@@ -191,153 +233,147 @@ curl -s "http://localhost:8080/api/urls/clicks?limit=50" \
 
 Optional query params: `startTime`, `endTime` (ISO-8601), `ipAddress`, `limit` (default 100).
 
-## Running Tests
+### Health check
 
-Tests use Testcontainers and require Docker to be running.
+```bash
+curl -s http://localhost:8080/actuator/health
+# {"status":"UP"}
+```
+
+## Database and Migrations
+
+Schema management is handled by Flyway. Three migrations run automatically on startup:
+
+| Migration | Description |
+|-----------|-------------|
+| `V1__initial_schema.sql` | Creates `api_keys`, `url_mappings`, `click_events` tables; sequence for short codes; indexes |
+| `V2__align_schema_with_entities.sql` | Renames `hashed_secret` → `hashed_key`; replaces numeric FK with `created_by` owner FK; adds cascade delete for click events |
+| `V3__relax_click_event_nulls.sql` | Drops NOT NULL on `ip_address`, `user_agent`, `referrer`; makes `event_id` optional with a partial unique index |
+
+Hibernate is set to `ddl-auto=validate` — it checks that the entity mappings match the migrated schema on every startup.
+
+## Testing
+
+Integration tests use Testcontainers to spin up real PostgreSQL, Redis, and RabbitMQ containers. Docker must be running.
 
 ```bash
 mvn test
 ```
 
-Expected output:
+The test suite covers:
+- Application context loads with Flyway migrations applied
+- URL creation (valid, duplicate alias → 409, invalid URL → 400)
+- Public redirect (valid code → 302, unknown code → 404)
+- Authentication (missing headers → 401/403, wrong secret → 401)
+- Ownership scoping (list returns only own URLs, delete cross-owner fails)
+- Click analytics (redirect triggers async click persistence)
 
-```
-Tests run: 12, Failures: 0, Errors: 0, Skipped: 0
-BUILD SUCCESS
-```
-
-To compile without running tests:
-
-```bash
-mvn clean compile -q
-```
+> **Verification note:** 12 integration tests were reported as passing in a prior development session. Run `mvn test` to verify the current code.
 
 ## Frontend Production Build
 
-The `pom.xml` includes a `<resources>` entry that automatically bundles `frontend/dist/` into the JAR's `static` directory. For a local `mvn package` with the frontend included:
+The `pom.xml` includes a `<resources>` entry that automatically bundles `frontend/dist/` into the JAR's `static` directory.
 
 ```bash
 cd frontend && npm ci && npm run build
 mvn clean package -DskipTests
 ```
 
-The Docker multi-stage build does this automatically (Stage 1 builds the frontend, Stage 2 copies `dist/` into `src/main/resources/static` before `mvn package`).
+The Docker multi-stage build does this automatically — Stage 1 builds the frontend with Vite, Stage 2 copies `dist/` into `src/main/resources/static` before `mvn package`.
+
+## Deployment
+
+### Live deployment
+
+The application is live at [https://url-shortner-kxv7.onrender.com](https://url-shortner-kxv7.onrender.com).
+
+> **Manual verification needed:** The exact hosting configuration (which managed services provide PostgreSQL, Redis, and RabbitMQ, and how environment variables were set) is not captured in this repository. Confirm these details against your Render dashboard before relying on this deployment.
+
+### Port configuration
+
+The application's `application.properties` supports the `PORT` environment variable:
+
+```
+server.port=${PORT:${SERVER_PORT:8080}}
 ```
 
-## Railway Deployment
+If `PORT` is set by the hosting platform, the application listens on that port. If not set, it falls back to `SERVER_PORT`, then to `8080`.
 
-### 1. Provision services in Railway
+### Alternative deployment (Railway / other Docker-based PaaS)
 
-1. Create a new Railway project.
-2. Add a **PostgreSQL** plugin — Railway provides `DATABASE_URL`. Set `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, and `SPRING_DATASOURCE_PASSWORD` from the plugin's connection details.
-3. Add a **Redis** plugin — set `SPRING_DATA_REDIS_HOST` and `SPRING_DATA_REDIS_PORT`.
-4. For RabbitMQ, Railway does not offer a native add-on. Use **CloudAMQP** free tier (see below).
+The repository includes a `railway.toml` for Railway. The same Dockerfile works on any container platform that supports multi-stage builds.
 
-### 2. CloudAMQP (RabbitMQ on Railway)
+1. Provision PostgreSQL, Redis, and RabbitMQ (Railway offers PostgreSQL and Redis plugins; RabbitMQ requires an external provider like CloudAMQP).
+2. Set the environment variables listed in the table above.
+3. Set `APP_DEV_API_KEY_ENABLED=false` to prevent predictable dev credentials.
+4. The health check endpoint is `/actuator/health`.
 
-1. Sign up at [cloudamqp.com](https://www.cloudamqp.com) and create a free **Little Lemur** instance.
-2. Copy the AMQP URL and parse it into:
-   - `SPRING_RABBITMQ_HOST`
-   - `SPRING_RABBITMQ_PORT` (usually `5672`)
-   - `SPRING_RABBITMQ_USERNAME`
-   - `SPRING_RABBITMQ_PASSWORD`
+### Security: provisioning production API keys
 
-### 3. Set Railway environment variables
+When `APP_DEV_API_KEY_ENABLED=false`, no API keys are auto-created. You must insert one manually.
 
-| Variable | Value |
-|----------|-------|
-| `SPRING_DATASOURCE_URL` | From Railway PostgreSQL plugin |
-| `SPRING_DATASOURCE_USERNAME` | From Railway PostgreSQL plugin |
-| `SPRING_DATASOURCE_PASSWORD` | From Railway PostgreSQL plugin |
-| `SPRING_DATA_REDIS_HOST` | From Railway Redis plugin |
-| `SPRING_DATA_REDIS_PORT` | From Railway Redis plugin |
-| `SPRING_RABBITMQ_HOST` | From CloudAMQP |
-| `SPRING_RABBITMQ_PORT` | From CloudAMQP (usually `5672`) |
-| `SPRING_RABBITMQ_USERNAME` | From CloudAMQP |
-| `SPRING_RABBITMQ_PASSWORD` | From CloudAMQP |
-| `APP_DEV_API_KEY_ENABLED` | `false` (prevents predictable dev credentials) |
+**How API key authentication works (verified from source):**
+- The `access_key` column stores the access key in plaintext — it is used for database lookup via `findByAccessKey()`.
+- The `hashed_key` column stores a BCrypt hash of the secret key.
+- On each request, the client sends both via headers. The server hashes the incoming secret and compares it to the stored hash using `BCryptPasswordEncoder.matches()`.
 
-### 4. Deploy
+**To create a production API key:**
 
-Railway detects `railway.toml` and builds the Dockerfile automatically. The health check endpoint is `/actuator/health`.
+1. Generate a strong, random access key and secret key. Never reuse the development defaults.
+2. Hash the secret key with BCrypt:
 
-### 5. Create a production API key
+```bash
+# Using Python (produces a $2b$ hash, compatible with Spring's BCryptPasswordEncoder):
+python -c "import bcrypt; print(bcrypt.hashpw(b'<your-secret-key>', bcrypt.gensalt()).decode())"
+```
 
-Since `APP_DEV_API_KEY_ENABLED=false` prevents auto-created dev credentials, you need to insert an API key manually. After the first deploy, run this SQL against your Railway PostgreSQL database (using Railway's query tool or `psql`):
+3. Insert into your production PostgreSQL:
 
 ```sql
 INSERT INTO api_keys (owner, access_key, hashed_key, created_at)
-VALUES (
-  'your-owner-name',
-  'your-access-key',
-  '$2a$10$YOUR_BCRYPT_HASH_HERE',
-  NOW()
-);
+VALUES ('<owner>', '<access-key>', '<bcrypt-hash>', NOW());
 ```
 
-To generate a BCrypt hash for your secret key:
+4. Use the access key and secret key in the frontend or API calls.
 
-```bash
-# Using Python:
-python -c "import bcrypt; print(bcrypt.hashpw(b'your-secret-key', bcrypt.gensalt()).decode())"
-
-# Or using htpasswd (Apache utility):
-htpasswd -nbBC 10 "" 'your-secret-key' | tr -d ':\n'
-```
-
-### 6. Smoke test
-
-```bash
-# Replace with your Railway URL
-BASE=https://your-app.railway.app
-
-# Health check
-curl $BASE/actuator/health
-
-# Create a URL
-curl -s -X POST $BASE/api/urls \
-  -H "Content-Type: application/json" \
-  -H "X-Access-Key: <key>" \
-  -H "X-Secret-Key: <secret>" \
-  -d '{"originalUrl": "https://example.com"}'
-
-# Test redirect
-curl -v $BASE/<shortCode>
-```
+> **Security note:** Real credentials must never be committed to source control, included in documentation, or sent to client-side JavaScript bundles. The `.gitignore` excludes `.env` files. The frontend stores credentials only in `sessionStorage` (per-tab, cleared on browser close).
 
 ## Known Limitations
 
-- **RabbitMQ on Railway**: There is no native Railway add-on. CloudAMQP free tier (Little Lemur) is limited to 1 million messages/month and 20 concurrent connections. Sufficient for light production use.
-- **Dev credentials on first run**: On a fresh database the application auto-creates a predictable dev API key (`dev-access-key` / `dev-secret-key`). The access key is logged; the secret key is NOT logged. Set `APP_DEV_API_KEY_ENABLED=false` in production and insert your own API key via SQL or a migration.
+- **RabbitMQ on PaaS**: Railway does not offer a native RabbitMQ add-on; an external provider like CloudAMQP is needed. Render similarly requires an external RabbitMQ instance.
+- **Dev credentials on first run**: On a fresh database with `APP_DEV_API_KEY_ENABLED=true` (the default), the app creates a predictable dev API key. Disable in production.
 - **Rate limiting**: IP-based (5 req/min) and API-key-based (100 req/hr) limits are applied via Redis. Adjust `rate.limit.*` properties for your traffic profile.
-- **No HTTPS termination**: The application speaks plain HTTP. Use a reverse proxy (Railway's built-in, nginx, etc.) for TLS in production.
-- **Analytics async delay**: Click events are processed via RabbitMQ asynchronously. There may be a brief delay (typically under 1 second) before a redirect registers in analytics.
+- **No HTTPS termination**: The application speaks plain HTTP. The hosting platform's reverse proxy (Render, Railway, nginx) handles TLS.
+- **Analytics async delay**: Click events are processed via RabbitMQ asynchronously. There may be a brief delay before a redirect registers in analytics.
+- **Single API key model**: No user registration or multi-tenant isolation beyond owner scoping. API keys are provisioned via SQL.
+
+## Acknowledgments
+
+Developed with AI assistance from [Kiro](https://kiro.dev), an AI-powered development environment. Code generation, debugging, and test writing were handled by the AI agent under the author's direction.
 
 ## Demo Flow
 
 ```bash
 BASE=http://localhost:8080
-
-# 1. Use the dev credentials (dev-access-key / dev-secret-key) or your own API key.
 ACCESS=dev-access-key
 SECRET=dev-secret-key
 
-# 2. Create a short URL
+# 1. Create a short URL
 curl -s -X POST $BASE/api/urls \
   -H "Content-Type: application/json" \
   -H "X-Access-Key: $ACCESS" \
   -H "X-Secret-Key: $SECRET" \
   -d '{"originalUrl": "https://example.com", "customAlias": "demo"}'
 
-# 3. Redirect (no auth needed)
+# 2. Follow the short link (no auth needed)
 curl -Lv $BASE/demo
 
-# 4. Check click analytics
+# 3. Check click analytics
 curl -s $BASE/api/urls/1/clicks \
   -H "X-Access-Key: $ACCESS" \
   -H "X-Secret-Key: $SECRET"
 
-# 5. Delete the URL
+# 4. Delete the URL
 curl -s -X DELETE $BASE/api/urls/1 \
   -H "X-Access-Key: $ACCESS" \
   -H "X-Secret-Key: $SECRET"
