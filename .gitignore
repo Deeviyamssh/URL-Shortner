@@ -13,3 +13,6 @@ app-log.txt
 # Frontend build artifacts and dependencies
 frontend/node_modules/
 frontend/dist/
+
+# AI-agent work logs — keep locally but not in the public repo
+KIRO_PROGRESS.md
