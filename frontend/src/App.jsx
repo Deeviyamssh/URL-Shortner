@@ -3,10 +3,38 @@ import ApiKeyForm from './components/ApiKeyForm.jsx';
 import UrlForm from './components/UrlForm.jsx';
 import UrlList from './components/UrlList.jsx';
 
+function readSavedCredentials() {
+  try {
+    const saved = sessionStorage.getItem('url-shortener-credentials');
+    if (!saved) return null;
+    const credentials = JSON.parse(saved);
+    if (
+      typeof credentials.accessKey === 'string' &&
+      credentials.accessKey &&
+      typeof credentials.secretKey === 'string' &&
+      credentials.secretKey
+    ) {
+      return credentials;
+    }
+  } catch {
+    // If storage is unavailable or malformed, show the sign-in page.
+  }
+  return null;
+}
+
+function clearSavedCredentials() {
+  try {
+    sessionStorage.removeItem('url-shortener-credentials');
+  } catch {
+    // Ignore storage errors; the in-memory sign-out still works.
+  }
+}
+
 export default function App() {
-  const [accessKey, setAccessKey] = useState('');
-  const [secretKey, setSecretKey] = useState('');
-  const [authenticated, setAuthenticated] = useState(false);
+  const [savedCredentials] = useState(readSavedCredentials);
+  const [accessKey, setAccessKey] = useState(() => savedCredentials?.accessKey ?? '');
+  const [secretKey, setSecretKey] = useState(() => savedCredentials?.secretKey ?? '');
+  const [authenticated, setAuthenticated] = useState(() => Boolean(savedCredentials));
   const [error, setError] = useState(null);
   // Trigger UrlList refresh by bumping a counter
   const [refreshTick, setRefreshTick] = useState(0);
@@ -14,11 +42,20 @@ export default function App() {
   const handleAuthenticated = useCallback((ak, sk) => {
     setAccessKey(ak);
     setSecretKey(sk);
+    try {
+      sessionStorage.setItem(
+        'url-shortener-credentials',
+        JSON.stringify({ accessKey: ak, secretKey: sk })
+      );
+    } catch {
+      // The current page remains usable, but a refresh may require signing in again.
+    }
     setAuthenticated(true);
     setError(null);
   }, []);
 
   const handleAuthError = useCallback((msg) => {
+    clearSavedCredentials();
     setError(msg);
     setAuthenticated(false);
     setAccessKey('');
@@ -26,6 +63,7 @@ export default function App() {
   }, []);
 
   const handleSignOut = useCallback(() => {
+    clearSavedCredentials();
     setAuthenticated(false);
     setAccessKey('');
     setSecretKey('');
