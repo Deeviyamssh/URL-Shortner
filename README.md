@@ -369,11 +369,13 @@ curl -s -X POST $BASE/api/urls \
 curl -Lv $BASE/demo
 
 # 3. Check click analytics
+# Note: the URL ID below assumes a fresh database where the first created URL has ID 1.
+# On an existing database, find the actual ID with: curl $BASE/api/urls -H "X-Access-Key: $ACCESS" -H "X-Secret-Key: $SECRET"
 curl -s $BASE/api/urls/1/clicks \
   -H "X-Access-Key: $ACCESS" \
   -H "X-Secret-Key: $SECRET"
 
-# 4. Delete the URL
+# 4. Delete the URL (same note about ID 1 applies)
 curl -s -X DELETE $BASE/api/urls/1 \
   -H "X-Access-Key: $ACCESS" \
   -H "X-Secret-Key: $SECRET"

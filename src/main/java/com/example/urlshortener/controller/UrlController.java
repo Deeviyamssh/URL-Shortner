@@ -9,10 +9,6 @@ import com.example.urlshortener.entity.ApiKey;
 import com.example.urlshortener.repository.ApiKeyRepository;
 import com.example.urlshortener.service.UrlService;
 import jakarta.servlet.http.HttpServletRequest;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -37,9 +33,11 @@ public class UrlController {
     }
 
     /**
-     * Gets the authenticated user from the security context and returns their owner.
+     * Returns the owner string for the currently authenticated principal.
      *
-     * @return the owner of the authenticated user, or "anonymous" if not authenticated
+     * @return the owner of the authenticated API key, or {@code null} if the
+     *         request is unauthenticated (security will have already blocked
+     *         unauthenticated requests to {@code /api/**} before this is reached)
      */
     private String getAuthenticatedOwner() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();

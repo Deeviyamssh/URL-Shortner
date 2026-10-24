@@ -83,6 +83,48 @@ public class UrlIntegrationTest extends BaseIntegrationTest {
     }
 
     @Test
+    void createUrl_concurrentDuplicateAlias_bothReturn409Or200() throws InterruptedException {
+        // Both threads attempt the same alias simultaneously, synchronized by a CyclicBarrier
+        // so both HTTP requests are dispatched in the same JVM scheduling window.
+        // Expected: one succeeds (200) and one gets a conflict (409); neither gets 500.
+        // If the service-level check serialises the requests, both could return 409 —
+        // that is also acceptable because the invariant (no 500) is the goal.
+        String alias = "concurrent-" + System.nanoTime();
+        UrlCreateRequest request = new UrlCreateRequest();
+        request.setOriginalUrl("https://example.com/concurrent");
+        request.setCustomAlias(alias);
+        HttpEntity<UrlCreateRequest> entity = new HttpEntity<>(request, authHeaders());
+
+        java.util.concurrent.CyclicBarrier barrier = new java.util.concurrent.CyclicBarrier(2);
+        int[] statuses = new int[2];
+
+        Thread t1 = new Thread(() -> {
+            try { barrier.await(); } catch (Exception ignored) {}
+            statuses[0] = restTemplate.exchange(
+                    "http://localhost:" + port + "/api/urls",
+                    HttpMethod.POST, entity, String.class).getStatusCode().value();
+        });
+        Thread t2 = new Thread(() -> {
+            try { barrier.await(); } catch (Exception ignored) {}
+            statuses[1] = restTemplate.exchange(
+                    "http://localhost:" + port + "/api/urls",
+                    HttpMethod.POST, entity, String.class).getStatusCode().value();
+        });
+
+        t1.start();
+        t2.start();
+        t1.join(10000);
+        t2.join(10000);
+
+        // Neither response may be 500 — that is the invariant this test enforces.
+        assertThat(statuses[0]).isIn(200, 409);
+        assertThat(statuses[1]).isIn(200, 409);
+        // At most one may succeed — it is not possible for both to create the same alias.
+        long successCount = java.util.Arrays.stream(statuses).filter(s -> s == 200).count();
+        assertThat(successCount).isLessThanOrEqualTo(1);
+    }
+
+    @Test
     void createUrl_invalidUrl_returns400() {
         UrlCreateRequest request = new UrlCreateRequest();
         request.setOriginalUrl("not-a-url");
