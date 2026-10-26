@@ -342,4 +342,136 @@ public class UrlIntegrationTest extends BaseIntegrationTest {
         // If there are clicks, verify they are accessible (no 403/404 for scoping)
         // The service scopes to owner's URLs so all results belong to dev-user
     }
+
+    // ==================== Registration tests ====================
+
+    @Test
+    void register_validRequest_returns201AndAccessKey() {
+        String username = "testuser-" + System.nanoTime();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        String body = String.format("{\"username\":\"%s\",\"password\":\"test1234\"}", username);
+
+        HttpEntity<String> entity = new HttpEntity<>(body, headers);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                "http://localhost:" + port + "/api/auth/register",
+                HttpMethod.POST, entity, Map.class);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(201);
+        assertThat(response.getBody()).isNotNull();
+        assertThat(response.getBody().get("accessKey")).isNotNull();
+        assertThat(response.getBody().get("accessKey").toString()).isNotBlank();
+        assertThat(response.getBody().get("owner")).isEqualTo(username);
+    }
+
+    @Test
+    void register_duplicateUsername_returns409() {
+        String username = "dupuser-" + System.nanoTime();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        String body = String.format("{\"username\":\"%s\",\"password\":\"test1234\"}", username);
+
+        // First registration — must succeed
+        HttpEntity<String> entity = new HttpEntity<>(body, headers);
+        ResponseEntity<Map> first = restTemplate.exchange(
+                "http://localhost:" + port + "/api/auth/register",
+                HttpMethod.POST, entity, Map.class);
+        assertThat(first.getStatusCode().value()).isEqualTo(201);
+
+        // Second registration with same username — must be 409
+        ResponseEntity<String> second = restTemplate.exchange(
+                "http://localhost:" + port + "/api/auth/register",
+                HttpMethod.POST, entity, String.class);
+        assertThat(second.getStatusCode().value()).isEqualTo(409);
+    }
+
+    @Test
+    void register_thenSignInWithReturnedKey_works() {
+        String username = "signintest-" + System.nanoTime();
+        String password = "test1234";
+
+        // Register
+        HttpHeaders regHeaders = new HttpHeaders();
+        regHeaders.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        String regBody = String.format("{\"username\":\"%s\",\"password\":\"%s\"}", username, password);
+        HttpEntity<String> regEntity = new HttpEntity<>(regBody, regHeaders);
+        ResponseEntity<Map> regResp = restTemplate.exchange(
+                "http://localhost:" + port + "/api/auth/register",
+                HttpMethod.POST, regEntity, Map.class);
+        assertThat(regResp.getStatusCode().value()).isEqualTo(201);
+
+        String accessKey = regResp.getBody().get("accessKey").toString();
+
+        // Sign in using the returned access key + original password
+        HttpHeaders signInHeaders = new HttpHeaders();
+        signInHeaders.set("X-Access-Key", accessKey);
+        signInHeaders.set("X-Secret-Key", password);
+        HttpEntity<Void> signInEntity = new HttpEntity<>(signInHeaders);
+
+        ResponseEntity<UrlDetailsResponse[]> listResp = restTemplate.exchange(
+                "http://localhost:" + port + "/api/urls",
+                HttpMethod.GET, signInEntity, UrlDetailsResponse[].class);
+
+        // New user has no URLs yet — should get 200 with empty array, not 401
+        assertThat(listResp.getStatusCode().value()).isEqualTo(200);
+    }
+
+    @Test
+    void register_shortPassword_returns400() {
+        String username = "shortpw-" + System.nanoTime();
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        String body = String.format("{\"username\":\"%s\",\"password\":\"short\"}", username);
+
+        HttpEntity<String> entity = new HttpEntity<>(body, headers);
+        ResponseEntity<String> response = restTemplate.exchange(
+                "http://localhost:" + port + "/api/auth/register",
+                HttpMethod.POST, entity, String.class);
+
+        assertThat(response.getStatusCode().value()).isEqualTo(400);
+    }
+
+    @Test
+    void register_newUserCannotSeeDevUserUrls() {
+        // Register a new user
+        String username = "isolated-" + System.nanoTime();
+        String password = "test1234";
+        HttpHeaders regHeaders = new HttpHeaders();
+        regHeaders.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        String regBody = String.format("{\"username\":\"%s\",\"password\":\"%s\"}", username, password);
+        HttpEntity<String> regEntity = new HttpEntity<>(regBody, regHeaders);
+        ResponseEntity<Map> regResp = restTemplate.exchange(
+                "http://localhost:" + port + "/api/auth/register",
+                HttpMethod.POST, regEntity, Map.class);
+        String newAccessKey = regResp.getBody().get("accessKey").toString();
+
+        // Create a URL as the dev user
+        String alias = "devonly-" + System.nanoTime();
+        UrlCreateRequest request = new UrlCreateRequest();
+        request.setOriginalUrl("https://example.com/devonly");
+        request.setCustomAlias(alias);
+        HttpEntity<UrlCreateRequest> createEntity = new HttpEntity<>(request, authHeaders());
+        restTemplate.exchange(
+                "http://localhost:" + port + "/api/urls",
+                HttpMethod.POST, createEntity, UrlCreateResponse.class);
+
+        // List URLs as the new user — should NOT see the dev user's URL
+        HttpHeaders newHeaders = new HttpHeaders();
+        newHeaders.set("X-Access-Key", newAccessKey);
+        newHeaders.set("X-Secret-Key", password);
+        HttpEntity<Void> listEntity = new HttpEntity<>(newHeaders);
+        ResponseEntity<UrlDetailsResponse[]> listResp = restTemplate.exchange(
+                "http://localhost:" + port + "/api/urls",
+                HttpMethod.GET, listEntity, UrlDetailsResponse[].class);
+
+        assertThat(listResp.getStatusCode().value()).isEqualTo(200);
+        assertThat(listResp.getBody()).isNotNull();
+        boolean seesDevUrl = java.util.Arrays.stream(listResp.getBody())
+                .anyMatch(u -> alias.equals(u.getShortCode()));
+        assertThat(seesDevUrl).isFalse();
+    }
+
+
+
+
 }

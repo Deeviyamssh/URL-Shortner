@@ -33,6 +33,9 @@ public class SecurityConfig {
                 .authorizeHttpRequests(authz -> authz
                         .requestMatchers("/actuator/**").permitAll()
 
+                        // Public registration endpoint — no auth required
+                        .requestMatchers("/api/auth/register").permitAll()
+
                         .requestMatchers("/api/**").access((authenticationSupplier, context) -> {
                             Authentication authentication = authenticationSupplier.get();
 
